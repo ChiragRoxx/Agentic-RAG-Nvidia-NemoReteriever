@@ -9,6 +9,7 @@ A powerful **Retrieval-Augmented Generation (RAG)** template built with **NVIDIA
 
 ## 🌟 **Features**
 
+### **Core RAG Capabilities**
 - 🤖 **NVIDIA AI Integration**: Uses NVIDIA's high-quality embedding models
 - 📄 **PDF Document Processing**: Automatic loading and intelligent chunking
 - 🔍 **Vector Search**: FAISS-based similarity search with persistence
@@ -17,6 +18,18 @@ A powerful **Retrieval-Augmented Generation (RAG)** template built with **NVIDIA
 - 🔒 **Secure**: Environment-based API key management
 - 📱 **Responsive**: Mobile-friendly design
 - 🚀 **Production Ready**: Comprehensive error handling and logging
+
+### **🧠 Agentic AI Mode (NEW!)**
+Powered by the **NVIDIA Agent Intelligence Toolkit**, unlock advanced AI capabilities:
+
+- **🔍 Multi-Step Reasoning**: Break down complex questions into logical steps
+- **🌐 Web Search Integration**: Access real-time information beyond your documents
+- **🧠 Information Analysis**: Advanced synthesis and pattern recognition
+- **🔧 Tool-Based Responses**: Autonomous decision-making on which tools to use
+- **📈 Performance Monitoring**: Track agent reasoning and tool usage
+- **⚡ Enhanced Context**: Combine knowledge base with external information
+
+**Toggle between Standard RAG and Agentic AI modes** with a simple button in the UI!
 
 ## 🎯 **Perfect For**
 
@@ -95,7 +108,20 @@ conda activate rag_env
 pip install -r requirements.txt
 ```
 
-### **Step 4: Configure Environment**
+### **Step 4: Enable Agentic AI Mode (Optional but Recommended)**
+For advanced AI capabilities, install the NVIDIA Agent Intelligence Toolkit:
+
+```bash
+# Install the agentic AI toolkit
+pip install aiqtoolkit[langchain]
+
+# Optional: Install web search capability
+pip install duckduckgo-search
+```
+
+> **Note**: Agentic AI mode provides multi-step reasoning, web search, and information analysis capabilities. If not installed, the system will work in standard RAG mode.
+
+### **Step 5: Configure Environment**
 1. **Copy the environment template**:
    ```bash
    cp .env.template .env
@@ -224,6 +250,61 @@ response = rag_agent.ask_question("Your question here")
 print(response.answer)
 print(f"Sources: {len(response.source_documents)}")
 ```
+
+### **🧠 Agentic AI Usage**
+When the NVIDIA Agent Intelligence Toolkit is installed, you get enhanced capabilities:
+
+#### **Web Interface**
+1. **Enable Agentic Mode**: Toggle the "🚀 Agentic AI Mode" switch in the sidebar
+2. **Ask Complex Questions**: The agent will use multi-step reasoning and external tools
+3. **Monitor Agent Activity**: View tools used and reasoning process
+
+#### **Command Line Interface**
+```bash
+# Start with agentic capabilities
+python main.py
+
+# In the CLI, type 'agentic' to toggle agentic mode
+> agentic
+🧠 Agentic AI Mode ENABLED!
+
+# Ask complex questions
+> Compare renewable energy policies across different countries mentioned in the documents
+```
+
+#### **Programmatic Usage**
+```python
+from src.agentic_rag import AgenticRAGAgent
+from src.rag_agent import RAGAgent
+import os
+
+# Initialize standard RAG agent first
+api_key = os.getenv("NVIDIA_API_KEY")
+rag_agent = RAGAgent("Data/Docs", api_key)
+rag_agent.setup_knowledge_base()
+
+# Create agentic agent
+agentic_agent = AgenticRAGAgent(
+    rag_agent=rag_agent,
+    api_key=api_key,
+    enable_web_search=True,
+    enable_analysis=True
+)
+
+# Ask complex questions with multi-step reasoning
+response = agentic_agent.ask_question(
+    "What are the latest developments in green hydrogen technology and how do they compare to what's in our documents?"
+)
+
+print(response.answer)
+print(f"Tools used: {response.tools_used}")
+print(f"Agent reasoning: {response.agent_reasoning}")
+```
+
+#### **Example Questions for Agentic Mode**
+- "Compare the efficiency of different hydrogen production methods and provide current market analysis"
+- "What are the key challenges mentioned in our documents and how do they align with current industry trends?"
+- "Analyze the economic viability of renewable energy projects based on our documents and current market data"
 
 ## 🔧 **Configuration Options**
 

@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 class PDFDocumentLoader:
     """Handles loading and processing PDF documents"""
     
-    def __init__(self, docs_folder: str, chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(self, docs_folder: str, chunk_size: int = 1500, chunk_overlap: int = 300):
         """
         Initialize the PDF document loader
         
         Args:
             docs_folder: Path to folder containing PDF documents
-            chunk_size: Size of text chunks for splitting
-            chunk_overlap: Overlap between chunks
+            chunk_size: Size of text chunks for splitting (increased for better context)
+            chunk_overlap: Overlap between chunks (increased for continuity)
         """
         self.docs_folder = Path(docs_folder)
         self.chunk_size = chunk_size

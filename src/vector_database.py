@@ -1,10 +1,12 @@
 """
 Vector Database for RAG Agent
 Handles local vector storage using FAISS for document embeddings
+Enhanced with security measures and JSON metadata storage
 """
 
 import os
-import pickle
+import json
+import hashlib
 import logging
 from typing import List, Optional, Tuple, Dict, Any
 from pathlib import Path
@@ -46,11 +48,89 @@ class VectorDatabase:
         # Create database directory
         self.db_path.mkdir(parents=True, exist_ok=True)
         
-        # Paths for saving/loading
+        # Paths for saving/loading (using JSON instead of pickle for security)
         self.index_path = self.db_path / f"{index_name}.faiss"
-        self.metadata_path = self.db_path / f"{index_name}_metadata.pkl"
+        self.metadata_path = self.db_path / f"{index_name}_metadata.json"
+        self.checksum_path = self.db_path / f"{index_name}_checksum.txt"
+        
+        # Security settings
+        self.allow_dangerous_deserialization = False  # Default to secure mode
         
         logger.info(f"Initialized vector database at: {self.db_path}")
+        logger.info("🔒 Security: Using JSON metadata storage instead of pickle")
+    
+    def _calculate_checksum(self, file_path: Path) -> str:
+        """Calculate SHA256 checksum of a file for integrity verification"""
+        try:
+            with open(file_path, 'rb') as f:
+                checksum = hashlib.sha256(f.read()).hexdigest()
+            return checksum
+        except Exception as e:
+            logger.error(f"Failed to calculate checksum: {str(e)}")
+            return ""
+    
+    def _verify_file_integrity(self) -> bool:
+        """Verify the integrity of the index file using checksum"""
+        try:
+            if not self.checksum_path.exists():
+                logger.warning("No checksum file found - cannot verify integrity")
+                return True  # Allow first-time loading
+            
+            with open(self.checksum_path, 'r') as f:
+                stored_checksum = f.read().strip()
+            
+            current_checksum = self._calculate_checksum(self.index_path)
+            
+            if stored_checksum == current_checksum:
+                logger.info("✅ File integrity verified")
+                return True
+            else:
+                logger.error("❌ File integrity check failed - index may be corrupted")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to verify file integrity: {str(e)}")
+            return False
+    
+    def _save_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Save metadata as JSON instead of pickle for security"""
+        try:
+            with open(self.metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2, default=str)
+            logger.info("✅ Metadata saved as secure JSON")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save metadata: {str(e)}")
+            return False
+    
+    def _load_metadata(self) -> Dict[str, Any]:
+        """Load metadata from JSON file"""
+        try:
+            if not self.metadata_path.exists():
+                return {}
+            
+            with open(self.metadata_path, 'r') as f:
+                metadata = json.load(f)
+            logger.info("✅ Metadata loaded from secure JSON")
+            return metadata
+        except Exception as e:
+            logger.error(f"Failed to load metadata: {str(e)}")
+            return {}
+    
+    def enable_unsafe_mode(self, confirm_understanding: bool = False):
+        """
+        Enable unsafe deserialization mode
+        
+        Args:
+            confirm_understanding: Must be True to confirm you understand the risks
+        """
+        if confirm_understanding:
+            self.allow_dangerous_deserialization = True
+            logger.warning("⚠️ WARNING: Unsafe deserialization mode enabled!")
+            logger.warning("⚠️ Only load FAISS indexes from trusted sources!")
+        else:
+            logger.error("❌ Must confirm understanding of security risks")
+            logger.error("   Call with confirm_understanding=True")
     
     def create_index(self, documents: List[Document]) -> bool:
         """
@@ -89,7 +169,7 @@ class VectorDatabase:
     
     def save_index(self) -> bool:
         """
-        Save the vector index to disk
+        Save the vector index to disk with security measures
         
         Returns:
             True if successful, False otherwise
@@ -104,7 +184,23 @@ class VectorDatabase:
             # Save FAISS index
             self.vectorstore.save_local(str(self.db_path), self.index_name)
             
-            logger.info(f"✅ Vector index saved to: {self.db_path}")
+            # Calculate and save checksum for integrity verification
+            if self.index_path.exists():
+                checksum = self._calculate_checksum(self.index_path)
+                with open(self.checksum_path, 'w') as f:
+                    f.write(checksum)
+                logger.info("✅ Checksum saved for integrity verification")
+            
+            # Save metadata securely
+            metadata = {
+                "created_at": str(Path(self.index_path).stat().st_mtime),
+                "document_count": len(self.vectorstore.docstore._dict) if hasattr(self.vectorstore, 'docstore') else 0,
+                "index_name": self.index_name,
+                "security_version": "1.0"
+            }
+            self._save_metadata(metadata)
+            
+            logger.info(f"✅ Vector index saved securely to: {self.db_path}")
             return True
             
         except Exception as e:
@@ -113,7 +209,7 @@ class VectorDatabase:
     
     def load_index(self) -> bool:
         """
-        Load vector index from disk
+        Load vector index from disk with security verification
         
         Returns:
             True if successful, False otherwise
@@ -123,16 +219,57 @@ class VectorDatabase:
                 logger.warning(f"No saved index found at: {self.index_path}")
                 return False
             
+            # Verify file integrity
+            if not self._verify_file_integrity():
+                logger.error("❌ Index file integrity check failed")
+                if not self.allow_dangerous_deserialization:
+                    logger.error("❌ Refusing to load potentially corrupted index")
+                    logger.info("💡 If you trust this file, call enable_unsafe_mode(confirm_understanding=True)")
+                    return False
+                else:
+                    logger.warning("⚠️ Loading index despite integrity check failure (unsafe mode)")
+            
             logger.info("Loading vector index from disk...")
             
-            # Load FAISS index
-            self.vectorstore = FAISS.load_local(
-                str(self.db_path),
-                self.embeddings,
-                self.index_name
-            )
+            # Load metadata first
+            metadata = self._load_metadata()
+            if metadata:
+                logger.info(f"Index metadata: {metadata}")
             
-            logger.info("✅ Vector index loaded successfully!")
+            # Load FAISS index with appropriate security settings
+            try:
+                if self.allow_dangerous_deserialization:
+                    logger.warning("⚠️ Loading with dangerous deserialization enabled")
+                    self.vectorstore = FAISS.load_local(
+                        str(self.db_path),
+                        self.embeddings,
+                        self.index_name,
+                        allow_dangerous_deserialization=True
+                    )
+                else:
+                    # Try to load without dangerous deserialization first
+                    try:
+                        self.vectorstore = FAISS.load_local(
+                            str(self.db_path),
+                            self.embeddings,
+                            self.index_name,
+                            allow_dangerous_deserialization=False
+                        )
+                        logger.info("✅ Loaded index safely without pickle deserialization")
+                    except Exception:
+                        logger.warning("Failed to load without dangerous deserialization")
+                        logger.warning("This may be due to an older index format that uses pickle")
+                        logger.error("❌ For security, refusing to load pickle-based index")
+                        logger.info("💡 Options:")
+                        logger.info("   1. Recreate index (recommended): delete vector_db folder")
+                        logger.info("   2. Enable unsafe mode: vector_db.enable_unsafe_mode(confirm_understanding=True)")
+                        return False
+            
+            except Exception as load_error:
+                logger.error(f"Failed to load FAISS index: {str(load_error)}")
+                return False
+            
+            logger.info("✅ Vector index loaded successfully with security verification!")
             return True
             
         except Exception as e:

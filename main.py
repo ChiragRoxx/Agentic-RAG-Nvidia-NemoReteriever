@@ -15,17 +15,28 @@ sys.path.append(str(Path(__file__).parent / "src"))
 from src.rag_agent import RAGAgent
 from src.nvidia_embeddings import NVIDIAEmbeddings
 
+# Try to import agentic capabilities
+try:
+    from src.agentic_rag import AgenticRAGAgent, AGENTIC_AI_AVAILABLE
+except ImportError:
+    AGENTIC_AI_AVAILABLE = False
+    AgenticRAGAgent = None
+
 
 def print_banner():
     """Print application banner"""
     print("=" * 60)
     print("🤖 RAG Agent - NVIDIA NemoRetriever Template")
+    if AGENTIC_AI_AVAILABLE:
+        print("🧠 Agentic AI Mode Available!")
     print("=" * 60)
     print("Ask questions about your PDF documents!")
     print("Type 'quit', 'exit', or 'q' to exit")
     print("Type 'help' for available commands")
     print("Type 'stats' to see knowledge base statistics")
     print("Type 'rebuild' to rebuild the knowledge base")
+    if AGENTIC_AI_AVAILABLE:
+        print("Type 'agentic' to toggle agentic AI mode")
     print("-" * 60)
 
 
@@ -35,11 +46,15 @@ def print_help():
     print("  help     - Show this help message")
     print("  stats    - Show knowledge base statistics")
     print("  rebuild  - Rebuild the knowledge base from PDFs")
+    if AGENTIC_AI_AVAILABLE:
+        print("  agentic  - Toggle agentic AI mode on/off")
     print("  clear    - Clear the screen")
     print("  quit/exit/q - Exit the application")
     print("\n💡 Tips:")
     print("  - Ask specific questions about your documents")
     print("  - The system will show relevant source documents")
+    if AGENTIC_AI_AVAILABLE:
+        print("  - Enable agentic mode for multi-step reasoning and web search")
     print("  - Processing time is displayed for each query")
     print()
 
@@ -68,10 +83,23 @@ def print_stats(rag_agent: RAGAgent):
 
 def format_response(response):
     """Format and display the RAG response"""
-    print(f"\n🤖 Answer:")
+    # Check if this is an agentic response
+    is_agentic = hasattr(response, 'is_agentic') and response.is_agentic
+    
+    mode_indicator = "🧠 Agentic AI" if is_agentic else "🤖 Standard RAG"
+    print(f"\n{mode_indicator} Answer:")
     print("-" * 40)
     print(response.answer)
     print("-" * 40)
+    
+    # Display agentic-specific information
+    if is_agentic:
+        if hasattr(response, 'tools_used') and response.tools_used:
+            print(f"\n🔧 Tools Used: {', '.join(response.tools_used)}")
+        
+        if hasattr(response, 'agent_reasoning') and response.agent_reasoning:
+            print(f"\n🧠 Agent Reasoning:")
+            print(f"   {response.agent_reasoning}")
     
     if response.source_documents:
         print(f"\n📚 Sources ({len(response.source_documents)} documents):")
@@ -162,12 +190,20 @@ def main():
 
     print("\n🚀 RAG Agent is ready! Ask me anything about your documents.")
     
+    # Initialize agentic mode variables
+    agentic_mode = False
+    agentic_agent = None
+    
+    if AGENTIC_AI_AVAILABLE:
+        print("💡 Tip: Type 'agentic' to enable autonomous AI agent mode!")
+    
     # Main interaction loop
     while True:
         try:
             # Get user input
+            mode_indicator = " [🧠 AGENTIC]" if agentic_mode else " [📚 STANDARD]"
             print("\n" + "="*60)
-            question = input("❓ Your question: ").strip()
+            question = input(f"❓ Your question{mode_indicator}: ").strip()
             
             if not question:
                 continue
@@ -194,14 +230,41 @@ def main():
                     print("❌ Failed to rebuild knowledge base")
                 continue
             
+            elif question.lower() == 'agentic' and AGENTIC_AI_AVAILABLE:
+                agentic_mode = not agentic_mode
+                if agentic_mode:
+                    print("\n🧠 Enabling Agentic AI Mode...")
+                    try:
+                        api_key = os.getenv("NVIDIA_API_KEY")
+                        agentic_agent = AgenticRAGAgent(
+                            rag_agent=rag_agent,
+                            api_key=api_key,
+                            enable_web_search=True,
+                            enable_analysis=True
+                        )
+                        print("✅ Agentic AI Mode ENABLED!")
+                        print("🚀 Features: Multi-step reasoning, web search, information analysis")
+                    except Exception as e:
+                        print(f"❌ Failed to initialize agentic agent: {str(e)}")
+                        agentic_mode = False
+                else:
+                    print("📚 Agentic AI Mode DISABLED - Switched to standard RAG mode")
+                    agentic_agent = None
+                continue
+            
             elif question.lower() == 'clear':
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print_banner()
                 continue
             
             # Process question
-            print(f"\n🔍 Searching knowledge base...")
-            response = rag_agent.ask_question(question)
+            if agentic_mode and agentic_agent:
+                print(f"\n🧠 Processing with Agentic AI (multi-step reasoning)...")
+                response = agentic_agent.ask_question(question)
+            else:
+                print(f"\n🔍 Searching knowledge base...")
+                response = rag_agent.ask_question(question)
+            
             format_response(response)
             
         except KeyboardInterrupt:

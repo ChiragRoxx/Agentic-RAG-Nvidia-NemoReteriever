@@ -7,6 +7,7 @@ import os
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from pathlib import Path
 
 from langchain.schema import Document
 from langchain.chains import RetrievalQA
@@ -52,8 +53,10 @@ class SimpleNVIDIALLM:
         payload = {
             "model": self.model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 1024,
-            "temperature": 0.1
+            "max_tokens": 4096,  # Increased from 1024 to allow longer responses
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "stream": False
         }
 
         try:
@@ -84,8 +87,8 @@ class RAGAgent:
         docs_folder: str,
         api_key: str,
         vector_db_path: str = "./vector_db",
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200
+        chunk_size: int = 1500,  # Increased for better context
+        chunk_overlap: int = 300  # Increased for better continuity
     ):
         """
         Initialize RAG Agent
@@ -106,17 +109,28 @@ class RAGAgent:
         self.embeddings = NVIDIAEmbeddings(api_key)
         self.vector_db = VectorDatabase(self.embeddings, vector_db_path)
         self.llm = SimpleNVIDIALLM(api_key)
+        
+        # Track last response for agentic integration
+        self.last_response = None
 
-        # Custom prompt template
-        self.prompt_template = """Use the following pieces of context to answer the question at the end.
-If you don't know the answer based on the context, just say that you don't know, don't try to make up an answer.
+        # Enhanced prompt template for comprehensive responses
+        self.prompt_template = """Use the following pieces of context to provide a comprehensive and detailed answer to the question at the end. 
+
+INSTRUCTIONS:
+- Provide a complete, thorough answer using ALL relevant information from the context
+- If the context contains multiple related points, include ALL of them in your response
+- When lists, steps, or recommendations are mentioned, provide the COMPLETE list/steps
+- Structure your response clearly with bullet points, numbering, or sections when appropriate
+- If the context mentions "see full report" or "complete list", extract and present ALL available information from the provided context
+- Do not truncate your response - provide the full, detailed answer
+- If you need to reference specific sections or pages, do so to help the user find complete information
 
 Context:
 {context}
 
 Question: {question}
 
-Answer: """
+Comprehensive Answer: """
         
         logger.info("RAG Agent initialized successfully")
     
@@ -168,13 +182,13 @@ Answer: """
     
 
     
-    def ask_question(self, question: str, k: int = 4) -> RAGResponse:
+    def ask_question(self, question: str, k: int = 8) -> RAGResponse:  # Increased for more comprehensive answers
         """
         Ask a question and get an answer from the knowledge base
 
         Args:
             question: The question to ask
-            k: Number of relevant documents to retrieve
+            k: Number of relevant documents to retrieve (increased for comprehensive responses)
 
         Returns:
             RAGResponse with answer and source documents
@@ -222,13 +236,18 @@ Answer: """
 
             logger.info(f"Question answered in {processing_time:.2f} seconds")
 
-            return RAGResponse(
+            response = RAGResponse(
                 answer=answer,
                 source_documents=source_docs,
                 confidence_scores=scores,
                 query=question,
                 processing_time=processing_time
             )
+            
+            # Store last response for agentic integration
+            self.last_response = response
+            
+            return response
 
         except Exception as e:
             logger.error(f"Failed to answer question: {str(e)}")
@@ -267,10 +286,118 @@ Answer: """
                 pdf_files = list(Path(self.docs_folder).glob("*.pdf"))
                 vector_stats["pdf_files_available"] = len(pdf_files)
                 vector_stats["docs_folder"] = self.docs_folder
-        except Exception:
-            pass
+                
+                # Calculate average chunks per PDF if we have both counts
+                if len(pdf_files) > 0 and vector_stats.get('document_count', 0) > 0:
+                    chunks_per_pdf = vector_stats['document_count'] / len(pdf_files)
+                    vector_stats["avg_chunks_per_pdf"] = round(chunks_per_pdf, 1)
+                    
+                # Add file size information
+                total_size = 0
+                file_details = []
+                for pdf_file in pdf_files:
+                    size = pdf_file.stat().st_size
+                    total_size += size
+                    file_details.append({
+                        "name": pdf_file.name,
+                        "size_mb": round(size / (1024 * 1024), 2)
+                    })
+                
+                vector_stats["total_size_mb"] = round(total_size / (1024 * 1024), 2)
+                vector_stats["file_details"] = file_details
+                
+        except Exception as e:
+            logger.warning(f"Could not get detailed file stats: {e}")
         
         return vector_stats
+    
+    def ask_comprehensive_question(self, question: str, max_context_chunks: int = 12) -> RAGResponse:
+        """
+        Enhanced question answering method for comprehensive responses
+        
+        Args:
+            question: The question to ask
+            max_context_chunks: Maximum number of document chunks to include for context
+            
+        Returns:
+            RAGResponse with comprehensive answer and sources
+        """
+        import time
+        start_time = time.time()
+
+        try:
+            if not self.vector_db.vectorstore:
+                logger.error("Vector database not initialized. Please setup knowledge base first.")
+                return RAGResponse(
+                    answer="Knowledge base not initialized. Please setup the knowledge base first.",
+                    source_documents=[],
+                    query=question,
+                    processing_time=time.time() - start_time
+                )
+
+            # Get more relevant documents for comprehensive context
+            scored_docs = self.get_relevant_documents(question, k=max_context_chunks)
+            
+            if not scored_docs:
+                return RAGResponse(
+                    answer="I couldn't find any relevant information to answer your question.",
+                    source_documents=[],
+                    query=question,
+                    processing_time=time.time() - start_time
+                )
+
+            # Extract documents and scores
+            source_docs = [doc for doc, score in scored_docs]
+            scores = [score for doc, score in scored_docs]
+
+            # Create extended context from retrieved documents
+            context = "\n\n---\n\n".join([
+                f"Document Section {i+1} (Relevance: {scores[i]:.3f}):\n{doc.page_content}" 
+                for i, doc in enumerate(source_docs)
+            ])
+
+            # Enhanced prompt for comprehensive responses
+            enhanced_prompt = f"""You are an expert assistant tasked with providing comprehensive, detailed answers. Use the following context to answer the question thoroughly and completely.
+
+CONTEXT (from {len(source_docs)} relevant document sections):
+{context}
+
+QUESTION: {question}
+
+INSTRUCTIONS FOR YOUR RESPONSE:
+1. Provide a complete, thorough answer using ALL relevant information from the context
+2. If the context contains lists, steps, or recommendations, include ALL of them in your response
+3. Structure your response clearly with bullet points, numbering, or sections when appropriate
+4. If multiple aspects are covered in the context, address ALL of them comprehensively
+5. Be thorough - do not truncate or summarize if there's space for full details
+6. If the context mentions partial information or refers to complete lists elsewhere, extract and present ALL available information from what's provided
+7. When lists or steps are mentioned but only partially shown, clearly state what information is available and what might be found in the complete source
+
+COMPREHENSIVE ANSWER:"""
+
+            # Generate answer using LLM with enhanced context
+            answer = self.llm.generate_response(enhanced_prompt)
+
+            processing_time = time.time() - start_time
+
+            logger.info(f"Comprehensive question answered in {processing_time:.2f} seconds with {len(source_docs)} sources")
+
+            return RAGResponse(
+                answer=answer,
+                source_documents=source_docs,
+                confidence_scores=scores,
+                query=question,
+                processing_time=processing_time
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to answer comprehensive question: {str(e)}")
+            return RAGResponse(
+                answer=f"I encountered an error while processing your question: {str(e)}",
+                source_documents=[],
+                query=question,
+                processing_time=time.time() - start_time
+            )
     
     def add_documents_to_knowledge_base(self, new_docs_folder: Optional[str] = None) -> bool:
         """
